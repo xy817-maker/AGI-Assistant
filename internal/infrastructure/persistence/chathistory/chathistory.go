@@ -24,6 +24,10 @@ type Repo interface {
 	Save(userID, role, content string)
 	// Load 加载某用户最近 N 条聊天记录（按时间正序返回）。
 	Load(userID string, limit int) []Entry
+	// SaveSummary 持久化某用户的会话摘要（upsert，每个用户最多一条）。
+	SaveSummary(userID, summary string)
+	// LoadSummary 加载某用户的会话摘要；无记录返回空字符串。
+	LoadSummary(userID string) string
 }
 
 // PGRepo 是 Postgres 实现
@@ -78,4 +82,39 @@ func (r *PGRepo) Load(userID string, limit int) []Entry {
 		result[i], result[j] = result[j], result[i]
 	}
 	return result
+}
+
+// SaveSummary 持久化会话摘要（upsert：每个 user_id 只保留最新一条）。
+// db 不可用时静默降级——摘要丢失只影响长对话上下文，不损坏主流程。
+func (r *PGRepo) SaveSummary(userID, summary string) {
+	if r.db == nil || userID == "" {
+		return
+	}
+	_, err := r.db.Exec(
+		`INSERT INTO chat_summary (user_id, summary, updated_at)
+		 VALUES ($1, $2, NOW())
+		 ON CONFLICT (user_id) DO UPDATE SET summary = EXCLUDED.summary, updated_at = NOW()`,
+		userID, summary,
+	)
+	if err != nil {
+		logger.L().Warn("chat summary save to PG failed", "user_id", userID, "err", err)
+	}
+}
+
+// LoadSummary 加载某用户的会话摘要；无记录或 db 不可用返回空字符串。
+func (r *PGRepo) LoadSummary(userID string) string {
+	if r.db == nil || userID == "" {
+		return ""
+	}
+	var summary string
+	err := r.db.QueryRow(
+		`SELECT summary FROM chat_summary WHERE user_id = $1`, userID,
+	).Scan(&summary)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			logger.L().Warn("chat summary load failed", "user_id", userID, "err", err)
+		}
+		return ""
+	}
+	return summary
 }

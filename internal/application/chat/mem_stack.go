@@ -39,6 +39,9 @@ type STMHydrator func(userID string) []shortterm.ConversationMessage
 // 失败 / 数据缺失时返回 nil 即可。
 type PrefHydrator func(userID string) map[string]string
 
+// SummaryHydrator 接收 userID，返回该用户的会话摘要；无记录返回空字符串。
+type SummaryHydrator func(userID string) string
+
 // memoryStack 聚合三层记忆 + 用户偏好。
 //
 // stm/pref 字段保留为 nil 占位——所有访问必须走 STM(userID) / Pref(userID)
@@ -49,6 +52,7 @@ type memoryStack struct {
 	stmMu       sync.RWMutex
 	stmByUser   map[string]*shortterm.ShortTerm
 	stmHydrator STMHydrator
+	sumHydrator SummaryHydrator // 会话摘要预热（与 STM 同批懒加载）
 
 	prefMu       sync.RWMutex
 	prefByUser   map[string]*preference.Preference
@@ -64,7 +68,7 @@ type memoryStack struct {
 //
 // hydrator 参数是可选的——nil 时桶首次创建为空（适合单测 / CLI 等无 PG 场景）。
 // 生产路径上 main 会传入实际的 chathistory.Load / pref.Load 闭包。
-func newMemoryStack(cfg *config.APIConfig, stmHydrator STMHydrator, prefHydrator PrefHydrator) *memoryStack {
+func newMemoryStack(cfg *config.APIConfig, stmHydrator STMHydrator, prefHydrator PrefHydrator, sumHydrator SummaryHydrator) *memoryStack {
 	ltm := longterm.New()
 	ltm.SetConsolidationConfig(&longterm.ConsolidationConfig{
 		SimilarityThreshold: cfg.MemoryConsolidationSimilarity,
@@ -78,6 +82,7 @@ func newMemoryStack(cfg *config.APIConfig, stmHydrator STMHydrator, prefHydrator
 		stmMaxTurns:  cfg.ShortTermMaxTurns,
 		stmByUser:    make(map[string]*shortterm.ShortTerm),
 		stmHydrator:  stmHydrator,
+		sumHydrator:  sumHydrator,
 		prefByUser:   make(map[string]*preference.Preference),
 		prefHydrator: prefHydrator,
 		ltm:          ltm,
@@ -122,6 +127,12 @@ func (m *memoryStack) STM(userID string) *shortterm.ShortTerm {
 	if m.stmHydrator != nil {
 		if hist := m.stmHydrator(userID); len(hist) > 0 {
 			s.Hydrate(toSTMMessages(hist))
+		}
+	}
+	// 会话摘要随同批懒加载恢复——重启后长对话仍能带着"更早内容的主线"继续
+	if m.sumHydrator != nil {
+		if sum := m.sumHydrator(userID); sum != "" {
+			s.SetSummary(sum)
 		}
 	}
 	m.stmByUser[userID] = s

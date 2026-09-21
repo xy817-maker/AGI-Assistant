@@ -49,6 +49,14 @@ func (a *UnifiedAgent) buildSystemPrompt(memPrefix, basePrompt string) string {
 func (a *UnifiedAgent) buildHistoryMessages(userID, query string) []llm.Message {
 	var msgs []llm.Message
 	if stm := a.mem.STM(userID); stm != nil {
+		// 会话摘要前缀：更早对话的压缩，让模型了解窗口外的"之前聊过什么"；
+		// 空（首日会话 / 摘要未生成）时不注入
+		if sum := stm.SummarySnapshot(); sum != "" {
+			msgs = append(msgs, llm.Message{
+				Role:    "system",
+				Content: "以下是本次会话更早内容的摘要（供参考上下文）：\n" + sum,
+			})
+		}
 		// STM 最后一条是刚加入的 user query，跳过重复
 		// 通过 Snapshot 拿到一致性副本，避免遍历期间 Add 并发改写底层切片
 		for _, m := range stm.Snapshot() {

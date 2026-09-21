@@ -23,6 +23,12 @@ type ShortTerm struct {
 	mu       sync.RWMutex
 	Messages []ConversationMessage `json:"messages"`
 	MaxTurns int                   `json:"max_turns"`
+	// Summary 是被窗口淘汰的更早对话的增量压缩摘要（LLM 生成，可能为空）。
+	// 与窗口一起构成完整会话记忆：摘要覆盖"更早"，窗口覆盖"最近"。
+	Summary string `json:"summary,omitempty"`
+	// evicted 暂存被窗口挤出的消息，供 application 层异步压缩成摘要。
+	// 由 Add 在淘汰时累积（锁内），TakeEvicted 一次性取走并清空。
+	evicted []ConversationMessage
 }
 
 // New 创建短期记忆，maxTurns 为保留的最大对话轮数
@@ -30,7 +36,8 @@ func New(maxTurns int) *ShortTerm {
 	return &ShortTerm{MaxTurns: maxTurns}
 }
 
-// Add 追加一条消息，超出窗口时自动丢弃最早记录
+// Add 追加一条消息，超出窗口时自动丢弃最早记录。
+// 被挤出的消息不直接丢弃——暂存进 evicted 缓冲，等待上层压缩为会话摘要。
 func (m *ShortTerm) Add(role, content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,8 +48,40 @@ func (m *ShortTerm) Add(role, content string) {
 	})
 	max := m.MaxTurns * 2 // 每轮 = user + assistant 两条
 	if len(m.Messages) > max {
+		m.evicted = append(m.evicted, m.Messages[:len(m.Messages)-max]...)
 		m.Messages = m.Messages[len(m.Messages)-max:]
 	}
+}
+
+// PeekEvicted 只读查看当前淘汰缓冲（拷贝），供上层判断是否有待压缩内容。
+func (m *ShortTerm) PeekEvicted() []ConversationMessage {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ConversationMessage, len(m.evicted))
+	copy(out, m.evicted)
+	return out
+}
+
+// ClearEvicted 清空淘汰缓冲。摘要成功持久化后调用；
+// LLM 失败时不调用，缓冲保留等待下轮重试，被淘汰的消息不会丢。
+func (m *ShortTerm) ClearEvicted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.evicted = nil
+}
+
+// SummarySnapshot 只读返回当前会话摘要（可能为空）。
+func (m *ShortTerm) SummarySnapshot() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.Summary
+}
+
+// SetSummary 覆盖写入会话摘要（由 application 层在 LLM 压缩完成后调用）。
+func (m *ShortTerm) SetSummary(summary string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Summary = summary
 }
 
 // Hydrate 从持久层批量灌入历史消息（用户首次活动时从 chat_history 表预热用）。

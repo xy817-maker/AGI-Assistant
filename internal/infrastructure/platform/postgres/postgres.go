@@ -71,6 +71,11 @@ func BootstrapSchema(pg *sql.DB) {
 			content    TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS chat_summary (
+			user_id    TEXT PRIMARY KEY,
+			summary    TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
 		`CREATE TABLE IF NOT EXISTS long_term_memory (
 			id            SERIAL PRIMARY KEY,
 			content       TEXT NOT NULL,

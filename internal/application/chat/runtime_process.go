@@ -285,6 +285,12 @@ func (a *UnifiedAgent) finalize(ctx context.Context, query string, resp *Respons
 		})
 	}
 
+	// 会话摘要：窗口有淘汰时异步增量压缩旧对话（LLM 失败保留缓冲下轮重试，
+	// 最坏退化为纯窗口行为，不影响主流程）
+	a.goSafe("process.session-summary", func() {
+		a.maybeSummarizeSession(userID)
+	})
+
 	// 异步触发记忆合并（去重+合并+衰减+过期；有图层时使用图感知合并以保护高中心度节点）
 	a.goSafe("process.consolidate", func() {
 		if a.mem.ltm.NeedConsolidation() {

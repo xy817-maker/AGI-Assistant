@@ -123,6 +123,11 @@ func New(cfg *config.APIConfig, deps Deps) *UnifiedAgent {
 	prefHydrator := func(userID string) map[string]string {
 		return deps.PrefRepo.Load(userID)
 	}
+	// 会话摘要 hydrator：与聊天记录同源（chat_summary 表），
+	// 桶懒加载时灌回，重启后长对话仍带"更早内容的主线"
+	sumHydrator := func(userID string) string {
+		return deps.ChatRepo.LoadSummary(userID)
+	}
 
 	a := &UnifiedAgent{
 		cfg:          cfg,
@@ -131,7 +136,7 @@ func New(cfg *config.APIConfig, deps Deps) *UnifiedAgent {
 		tools:        newToolRegistry(toolimpl.DefaultTools()),
 		subagents:    newSubAgentRegistry(),
 		runtime:      newTaskRuntime(),
-		mem:          newMemoryStack(cfg, stmHydrator, prefHydrator),
+		mem:          newMemoryStack(cfg, stmHydrator, prefHydrator, sumHydrator),
 		repos:        newRepoBundle(deps),
 		ragMilvusDim: cfg.RAGMilvusDim,
 	}
