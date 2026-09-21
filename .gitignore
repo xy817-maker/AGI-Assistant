@@ -1,0 +1,22 @@
+# Build artifacts
+/final-agent
+/bin/
+/dist/
+*.test
+*.out
+.data/
+
+# IDE
+/.idea/
+/.vscode/
+/.worktrees/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Local env overrides
+.env
+.env.local
